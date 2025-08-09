@@ -1,1 +1,1 @@
-worker: python rusago_bot.py
+web: python rusago.py
