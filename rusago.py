@@ -1,39 +1,30 @@
 # rusago.py
 import os
-import re
 import logging
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, ConversationHandler
 from telegram.constants import ParseMode
+from telegram.error import TelegramError
 
 # Устанавливаем уровень логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     level=logging.INFO)
 
-# === УСТАНОВИТЕ ВАШ ТОКЕН ===
-# Получаем токен из переменной окружения.
+# === Получаем токен из переменной окружения ===
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
     logging.error("Ошибка: Переменная окружения BOT_TOKEN не установлена.")
     exit(1)
 
-# Замените на реальные Telegram ID администраторов
+# === ID администраторов и специалиста ===
 ADMIN_IDS = [5979123966, 939518066]
-# Специалист, который будет вести чат с клиентами
 SPECIALIST_ADMIN_ID = 5979123966
 
 # === Этапы диалога для заявки ===
 NAME, PHONE, MESSAGE, PHOTO = range(4)
 
-# Отмена
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Отменяет текущий разговор.
-    """
-    await update.message.reply_text("Заявка отменена. Можете начать заново с команды /start")
-    return ConversationHandler.END
+# --- Обработчики команд и кнопок ---
 
-# Старт
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Отправляет приветственное сообщение и кнопки "Оставить заявку" и "Написать специалисту".
@@ -45,7 +36,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=markup
     )
 
-# Обработчик для кнопки "Оставить заявку"
 async def start_new_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Начинает сбор данных для новой заявки.
@@ -53,7 +43,6 @@ async def start_new_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Как вас зовут?")
     return NAME
 
-# Обработчик для кнопки "Написать специалисту"
 async def handle_specialist_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Перенаправляет пользователя в чат со специалистом.
@@ -63,23 +52,28 @@ async def handle_specialist_redirect(update: Update, context: ContextTypes.DEFAU
         specialist_username = chat_info.username
         if specialist_username:
             await update.message.reply_text(
-                "Вы будете перенаправлены в чат со специалистом. Пожалуйста, напишите ему напрямую.",
-            )
-            await update.message.reply_text(
-                f"Чат со специалистом: t.me/{specialist_username}"
+                f"Вы будете перенаправлены в чат со специалистом: t.me/{specialist_username}"
             )
         else:
             await update.message.reply_text(
                 "К сожалению, у специалиста нет публичного имени пользователя Telegram. Пожалуйста, отправьте заявку, чтобы он мог с вами связаться."
             )
-    except Exception as e:
+    except TelegramError as e:
         logging.error(f"Ошибка при получении информации о специалисте: {e}")
         await update.message.reply_text(
             "Произошла ошибка при попытке связаться со специалистом. Пожалуйста, попробуйте отправить заявку."
         )
     return ConversationHandler.END
 
-# Пошаговый сбор данных для заявки
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Отменяет текущий разговор.
+    """
+    await update.message.reply_text("Заявка отменена. Можете начать заново с команды /start")
+    return ConversationHandler.END
+
+# --- Пошаговый сбор данных для заявки ---
+
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Сохраняет имя пользователя и просит ввести телефон.
@@ -120,8 +114,7 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["photo"] = photo_file_id
     
-    # Получаем никнейм пользователя, если он существует
-    user_username = update.message.from_user.username
+    # Получаем информацию о пользователе
     user_first_name = update.message.from_user.first_name
     user_last_name = update.message.from_user.last_name
 
@@ -139,15 +132,14 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if photo_file_id:
             await context.bot.send_photo(chat_id=admin_id, photo=photo_file_id)
 
-    # Завершаем диалог и возвращаемся к началу
     await start(update, context)
     return ConversationHandler.END
 
-# Пропуск фото
 async def skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await get_photo(update, context)
 
-# --- Настройка приложения ---
+# --- Настройка приложения для Gunicorn (Render) ---
+
 # Создаем объект ApplicationBuilder в глобальной области
 app = ApplicationBuilder().token(TOKEN).build()
 
@@ -170,10 +162,3 @@ conv_handler = ConversationHandler(
     fallbacks=[CommandHandler("cancel", cancel)],
 )
 app.add_handler(conv_handler)
-
-
-# Этот блок используется только для локального запуска (например, `python rusago.py`)
-# Gunicorn будет импортировать файл и использовать глобальную переменную `app` напрямую
-if __name__ == '__main__':
-    print("Бот запущен в режиме поллинга...")
-    app.run_polling()
