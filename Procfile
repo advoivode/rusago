@@ -1,1 +1,1 @@
-web: python rusago.py
+web: gunicorn rusago:app
