@@ -148,38 +148,32 @@ async def skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await get_photo(update, context)
 
 # --- Настройка приложения ---
-def main():
-    # Создаем объект ApplicationBuilder
-    app = ApplicationBuilder().token(TOKEN).build()
+# Создаем объект ApplicationBuilder в глобальной области
+app = ApplicationBuilder().token(TOKEN).build()
 
-    # Добавляем обработчики команд и кнопок на верхнем уровне
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.Regex("^Написать специалисту$"), handle_specialist_redirect))
+# Добавляем обработчики команд и кнопок
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.Regex("^Написать специалисту$"), handle_specialist_redirect))
 
-    # Создаем и добавляем ConversationHandler для сбора заявки
-    conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^Оставить заявку$"), start_new_request)],
-        states={
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
-            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
-            MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_message)],
-            PHOTO: [
-                MessageHandler(filters.PHOTO, get_photo),
-                MessageHandler(filters.TEXT & filters.Regex("(?i)пропустить"), skip_photo)
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-    app.add_handler(conv_handler)
+# Создаем и добавляем ConversationHandler для сбора заявки
+conv_handler = ConversationHandler(
+    entry_points=[MessageHandler(filters.Regex("^Оставить заявку$"), start_new_request)],
+    states={
+        NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
+        PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
+        MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_message)],
+        PHOTO: [
+            MessageHandler(filters.PHOTO, get_photo),
+            MessageHandler(filters.TEXT & filters.Regex("(?i)пропустить"), skip_photo)
+        ],
+    },
+    fallbacks=[CommandHandler("cancel", cancel)],
+)
+app.add_handler(conv_handler)
 
-    # --- Запуск бота на Render (Webhook) ---
-    PORT = int(os.environ.get('PORT', 8000))
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=TOKEN,
-        webhook_url=f"https://rusago-bot.onrender.com/{TOKEN}" # Замените URL на свой
-    )
-    
+
+# Этот блок используется только для локального запуска (например, `python rusago.py`)
+# Gunicorn будет импортировать файл и использовать глобальную переменную `app` напрямую
 if __name__ == '__main__':
-    main()
+    print("Бот запущен в режиме поллинга...")
+    app.run_polling()
