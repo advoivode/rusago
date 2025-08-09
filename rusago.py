@@ -1,23 +1,14 @@
-# rusago_bot.py
 import os
 import re
-import logging
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, ConversationHandler
 
-# Устанавливаем уровень логирования
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    level=logging.INFO)
-
 # === УСТАНОВИТЕ ВАШ ТОКЕН ===
-# Получаем токен из переменной окружения.
+# Получаем токен из переменной окружения. Это безопасный способ.
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
-    logging.error("Ошибка: Переменная окружения BOT_TOKEN не установлена.")
+    print("Ошибка: Переменная окружения BOT_TOKEN не установлена.")
     exit(1)
-
-# Получаем URL вашего приложения на Render из переменной окружения
-RENDER_URL = os.getenv("RENDER_URL", "False")
 
 # Замените на реальные Telegram ID администраторов
 ADMIN_IDS = [5979123966, 939518066]
@@ -25,7 +16,7 @@ ADMIN_IDS = [5979123966, 939518066]
 SPECIALIST_ADMIN_ID = 5979123966
 
 # === Этапы диалога для заявки ===
-NAME, PHONE, COMMENT, PHOTO = range(4)
+NAME, PHONE, MESSAGE, PHOTO = range(4)
 
 # Отмена
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -41,14 +32,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Отправляет приветственное сообщение и кнопки "Отправить заявку" и "Написать специалисту".
     """
     # Создаем клавиатуру с кнопками
-    keyboard = [[KeyboardButton("Отправить заявку")], [KeyboardButton("Написать специалисту")]]
-    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False) # one_time_keyboard=False для постоянного отображения
+    keyboard = [[KeyboardButton("Оставить заявку")], [KeyboardButton("Написать специалисту")]]
+    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
     await update.message.reply_text(
         "Привет! Я готов принимать твои заявки. Ты можешь выбрать один из вариантов ниже 👇",
         reply_markup=markup
     )
 
-# Обработчик для кнопки "Отправить заявку"
+# Обработчик для кнопки "Оставить заявку"
 async def start_new_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Начинает сбор данных для новой заявки.
@@ -91,13 +82,13 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     context.user_data["phone"] = update.message.text
     await update.message.reply_text("Введите ваш комментарий (или напишите 'Пропустить'):")
-    return COMMENT
+    return MESSAGE
 
-async def get_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Сохраняет комментарий и просит отправить фото.
     """
-    context.user_data["comment"] = update.message.text
+    context.user_data["message"] = update.message.text
     await update.message.reply_text("Отправьте фото документов (или напишите 'Пропустить'):")
     return PHOTO
 
@@ -125,7 +116,7 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📩 Новая заявка:\n"
         f"👤 Имя: {context.user_data.get('name', 'Не указано')}\n"
         f"📞 Телефон: {context.user_data.get('phone', 'Не указан')}\n"
-        f"💬 Комментарий: {context.user_data.get('comment', 'Не указан')}\n"
+        f"💬 Комментарий: {context.user_data.get('message', 'Не указан')}\n"
         f"🔗 Никнейм Telegram: {f'@{user_username}' if user_username else 'Не указан'}"
     )
 
@@ -138,41 +129,36 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
     return ConversationHandler.END
 
-# Запуск бота
+# Пропуск фото
+async def skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await get_photo(update, context)
+
+# --- Настройка приложения ---
+# Создаем объект ApplicationBuilder
+app = ApplicationBuilder().token(TOKEN).build()
+
+# Добавляем обработчики команд и кнопок на верхнем уровне
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.Regex("^Написать специалисту$"), handle_specialist_redirect))
+
+# Создаем и добавляем ConversationHandler для сбора заявки
+conv_handler = ConversationHandler(
+    entry_points=[MessageHandler(filters.Regex("^Оставить заявку$"), start_new_request)],
+    states={
+        NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
+        PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
+        MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_message)],
+        PHOTO: [
+            MessageHandler(filters.PHOTO, get_photo),
+            MessageHandler(filters.TEXT & filters.Regex("(?i)пропустить"), skip_photo)
+        ],
+    },
+    fallbacks=[CommandHandler("cancel", cancel)],
+)
+app.add_handler(conv_handler)
+
+
+# --- Запуск бота ---
 if __name__ == '__main__':
-    # Создаем объект ApplicationBuilder
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    # Добавляем обработчики команд и кнопок на верхнем уровне
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.Regex("^Написать специалисту$"), handle_specialist_redirect))
-
-    # Создаем и добавляем ConversationHandler для сбора заявки
-    conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^Отправить заявку$"), start_new_request)],
-        states={
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
-            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
-            COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_comment)],
-            PHOTO: [
-                MessageHandler(filters.PHOTO, get_photo),
-                MessageHandler(filters.TEXT & filters.Regex("(?i)пропустить"), get_photo)
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-    app.add_handler(conv_handler)
-    
-    # === Важная часть для развертывания ===
-    if RENDER_URL == "False":
-        # Если переменная RENDER_URL не задана, запускаем бота в режиме поллинга (для локального тестирования)
-        print("Бот запущен в режиме polling...")
-        app.run_polling()
-    else:
-        # Если переменная RENDER_URL задана, запускаем бота в режиме webhook (для Render)
-        print("Бот запущен в режиме webhook...")
-        app.run_webhook(listen="0.0.0.0",
-                        port=int(os.environ.get("PORT", "8000")),
-                        url_path=TOKEN,
-                        webhook_url=f"{RENDER_URL}/{TOKEN}")
-
+    print("Бот запущен...")
+    app.run_polling()
