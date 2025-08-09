@@ -138,9 +138,7 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await get_photo(update, context)
 
-# --- Настройка приложения для Gunicorn (Render) ---
-
-# Создаем объект ApplicationBuilder в глобальной области
+# --- Создаем объект приложения ---
 app = ApplicationBuilder().token(TOKEN).build()
 
 # Добавляем обработчики команд и кнопок
