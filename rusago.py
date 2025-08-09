@@ -1,13 +1,20 @@
+# rusago.py
 import os
 import re
+import logging
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, ConversationHandler
+from telegram.constants import ParseMode
+
+# Устанавливаем уровень логирования
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    level=logging.INFO)
 
 # === УСТАНОВИТЕ ВАШ ТОКЕН ===
-# Получаем токен из переменной окружения. Это безопасный способ.
+# Получаем токен из переменной окружения.
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
-    print("Ошибка: Переменная окружения BOT_TOKEN не установлена.")
+    logging.error("Ошибка: Переменная окружения BOT_TOKEN не установлена.")
     exit(1)
 
 # Замените на реальные Telegram ID администраторов
@@ -29,9 +36,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Старт
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Отправляет приветственное сообщение и кнопки "Отправить заявку" и "Написать специалисту".
+    Отправляет приветственное сообщение и кнопки "Оставить заявку" и "Написать специалисту".
     """
-    # Создаем клавиатуру с кнопками
     keyboard = [[KeyboardButton("Оставить заявку")], [KeyboardButton("Написать специалисту")]]
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
     await update.message.reply_text(
@@ -52,18 +58,24 @@ async def handle_specialist_redirect(update: Update, context: ContextTypes.DEFAU
     """
     Перенаправляет пользователя в чат со специалистом.
     """
-    chat_info = await context.bot.get_chat(SPECIALIST_ADMIN_ID)
-    specialist_username = chat_info.username
-    if specialist_username:
+    try:
+        chat_info = await context.bot.get_chat(SPECIALIST_ADMIN_ID)
+        specialist_username = chat_info.username
+        if specialist_username:
+            await update.message.reply_text(
+                "Вы будете перенаправлены в чат со специалистом. Пожалуйста, напишите ему напрямую.",
+            )
+            await update.message.reply_text(
+                f"Чат со специалистом: t.me/{specialist_username}"
+            )
+        else:
+            await update.message.reply_text(
+                "К сожалению, у специалиста нет публичного имени пользователя Telegram. Пожалуйста, отправьте заявку, чтобы он мог с вами связаться."
+            )
+    except Exception as e:
+        logging.error(f"Ошибка при получении информации о специалисте: {e}")
         await update.message.reply_text(
-            "Вы будете перенаправлены в чат со специалистом. Пожалуйста, напишите ему напрямую.",
-        )
-        await update.message.reply_text(
-            f"Чат со специалистом: t.me/{specialist_username}"
-        )
-    else:
-        await update.message.reply_text(
-            "К сожалению, у специалиста нет публичного имени пользователя Telegram. Пожалуйста, отправьте заявку, чтобы он мог с вами связаться."
+            "Произошла ошибка при попытке связаться со специалистом. Пожалуйста, попробуйте отправить заявку."
         )
     return ConversationHandler.END
 
@@ -110,18 +122,20 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Получаем никнейм пользователя, если он существует
     user_username = update.message.from_user.username
+    user_first_name = update.message.from_user.first_name
+    user_last_name = update.message.from_user.last_name
 
     # Формируем и отправляем уведомление админам
     text = (
-        f"📩 Новая заявка:\n"
-        f"👤 Имя: {context.user_data.get('name', 'Не указано')}\n"
-        f"📞 Телефон: {context.user_data.get('phone', 'Не указан')}\n"
-        f"💬 Комментарий: {context.user_data.get('message', 'Не указан')}\n"
-        f"🔗 Никнейм Telegram: {f'@{user_username}' if user_username else 'Не указан'}"
+        f"<b>📩 Новая заявка:</b>\n"
+        f"👤 <b>Имя:</b> {context.user_data.get('name', 'Не указано')}\n"
+        f"📞 <b>Телефон:</b> {context.user_data.get('phone', 'Не указан')}\n"
+        f"💬 <b>Комментарий:</b> {context.user_data.get('message', 'Не указан')}\n"
+        f"🔗 <b>Telegram:</b> <a href='tg://user?id={update.message.from_user.id}'>{user_first_name} {user_last_name}</a>"
     )
 
     for admin_id in ADMIN_IDS:
-        await context.bot.send_message(chat_id=admin_id, text=text)
+        await context.bot.send_message(chat_id=admin_id, text=text, parse_mode=ParseMode.HTML)
         if photo_file_id:
             await context.bot.send_photo(chat_id=admin_id, photo=photo_file_id)
 
@@ -134,31 +148,38 @@ async def skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await get_photo(update, context)
 
 # --- Настройка приложения ---
-# Создаем объект ApplicationBuilder
-app = ApplicationBuilder().token(TOKEN).build()
+def main():
+    # Создаем объект ApplicationBuilder
+    app = ApplicationBuilder().token(TOKEN).build()
 
-# Добавляем обработчики команд и кнопок на верхнем уровне
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.Regex("^Написать специалисту$"), handle_specialist_redirect))
+    # Добавляем обработчики команд и кнопок на верхнем уровне
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Regex("^Написать специалисту$"), handle_specialist_redirect))
 
-# Создаем и добавляем ConversationHandler для сбора заявки
-conv_handler = ConversationHandler(
-    entry_points=[MessageHandler(filters.Regex("^Оставить заявку$"), start_new_request)],
-    states={
-        NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
-        PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
-        MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_message)],
-        PHOTO: [
-            MessageHandler(filters.PHOTO, get_photo),
-            MessageHandler(filters.TEXT & filters.Regex("(?i)пропустить"), skip_photo)
-        ],
-    },
-    fallbacks=[CommandHandler("cancel", cancel)],
-)
-app.add_handler(conv_handler)
+    # Создаем и добавляем ConversationHandler для сбора заявки
+    conv_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^Оставить заявку$"), start_new_request)],
+        states={
+            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
+            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
+            MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_message)],
+            PHOTO: [
+                MessageHandler(filters.PHOTO, get_photo),
+                MessageHandler(filters.TEXT & filters.Regex("(?i)пропустить"), skip_photo)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    app.add_handler(conv_handler)
 
-
-# --- Запуск бота ---
+    # --- Запуск бота на Render (Webhook) ---
+    PORT = int(os.environ.get('PORT', 8000))
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=TOKEN,
+        webhook_url=f"https://rusago-bot.onrender.com/{TOKEN}" # Замените URL на свой
+    )
+    
 if __name__ == '__main__':
-    print("Бот запущен...")
-    app.run_polling()
+    main()
