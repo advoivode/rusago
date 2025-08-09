@@ -1,1 +1,1 @@
-web: gunicorn rusago:app
+web: gunicorn web:app
