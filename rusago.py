@@ -24,7 +24,7 @@ if not TOKEN:
     exit(1)
 
 ADMIN_IDS = [5979123966, 939518066]
-SPECIALIST_ADMIN_ID = 5979123966
+SPECIALIST_ADMIN_ID = 939518066
 
 # Этапы диалога
 NAME, PHONE, COMMENT, PHOTO = range(4)
@@ -257,3 +257,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
