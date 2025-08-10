@@ -108,7 +108,7 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # === ОСНОВНАЯ ФУНКЦИЯ ===
-async def main():
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -131,8 +131,8 @@ async def main():
     app.add_handler(conv_handler)
 
     logger.info("Бот запущен (polling)")
-    await app.run_polling()
+    app.run_polling()
+
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()
