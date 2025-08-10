@@ -55,7 +55,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def start_new_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Очищаем данные, если они уже есть, чтобы начать новый диалог
     context.user_data.clear()
     context.user_data["photos"] = []
     
@@ -97,9 +96,11 @@ async def get_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return PHOTO
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Убираем старый таймер
     if 'job' in context.user_data:
         context.user_data['job'].job.schedule_removal()
 
+    # Добавляем фото в список
     if update.message.photo:
         photo_file_id = update.message.photo[-1].file_id
         if "photos" not in context.user_data:
@@ -108,12 +109,16 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["photos"].append(photo_file_id)
 
     current_photos_count = len(context.user_data["photos"])
+    
+    # Теперь логика стала проще и надёжнее
     if current_photos_count < MIN_PHOTOS:
         await update.message.reply_text(
             f"Получено {current_photos_count}/{MIN_PHOTOS} фото. "
             "Отправьте еще фото."
         )
-    else:
+    
+    # Кнопка «Готово» будет показана, как только будет достигнуто минимальное количество фото
+    if current_photos_count >= MIN_PHOTOS:
         keyboard = [[KeyboardButton("Готово")]]
         markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(
@@ -122,6 +127,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=markup
         )
     
+    # Перезапускаем таймер
     job_queue = context.application.job_queue
     job_context = {'chat_id': update.effective_chat.id, 'user_data': context.user_data}
     context.user_data['job'] = job_queue.run_once(auto_finalize_request, 60, chat_id=update.effective_chat.id, user_data=job_context)
