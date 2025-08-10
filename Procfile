@@ -1,1 +1,1 @@
-web: gunicorn web:server
+worker: python rusago_bot.py
