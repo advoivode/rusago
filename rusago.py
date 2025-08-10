@@ -254,3 +254,17 @@ def main():
     app.run_polling()
 if __name__ == "__main__":
     main()
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+    
+    # ... ваши обработчики ...
+    
+    # Запуск бота в режиме Webhook
+    PORT = int(os.environ.get("PORT", "8080"))
+    app.run_webhook(listen="0.0.0.0",
+                    port=PORT,
+                    url_path=TOKEN,
+                    webhook_url=f'https://{render_project_name}.onrender.com/{TOKEN}')
+
+if __name__ == '__main__':
+    main()
