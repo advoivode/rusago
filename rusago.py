@@ -32,10 +32,6 @@ MIN_PHOTOS = 4
 
 # === ОБРАБОТЧИКИ ===
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Убираем таймер, если он был
-    if 'job' in context.user_data:
-        context.user_data['job'].schedule_removal()
-        del context.user_data['job']
     context.user_data.clear()
     await update.message.reply_text(
         "Заявка отменена. Можете начать заново с команды /start",
@@ -57,7 +53,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def start_new_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Очищаем данные, если они уже есть, чтобы начать новый диалог
     context.user_data.clear()
     context.user_data["photos"] = []
     await update.message.reply_text("Как вас зовут?", reply_markup=ReplyKeyboardRemove())
@@ -90,19 +85,11 @@ async def get_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["comment"] = update.message.text if update.message.text.lower() != 'пропустить' else 'Нет комментария'
     await update.message.reply_text(
         f"Отправьте не менее {MIN_PHOTOS} фото. Вы можете отправить их одной группой или по одному. "
-        "После того, как отправите все фото, нажмите 'Готово' или подождите 60 секунд."
+        "После того, как отправите все фото, нажмите 'Готово'."
     )
-    # Устанавливаем таймер
-    job_queue = context.application.job_queue
-    job_context = {'chat_id': update.effective_chat.id, 'user_data': context.user_data}
-    context.user_data['job'] = job_queue.run_once(auto_finalize_request, 60, chat_id=update.effective_chat.id, data=job_context)
     return PHOTO
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Сбрасываем таймер при получении нового фото
-    if 'job' in context.user_data:
-        context.user_data['job'].schedule_removal()
-    
     if update.message.photo:
         photo_file_id = update.message.photo[-1].file_id
         if "photos" not in context.user_data:
@@ -126,69 +113,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Отправьте еще фото."
         )
     
-    # Перезапускаем таймер
-    job_queue = context.application.job_queue
-    job_context = {'chat_id': update.effective_chat.id, 'user_data': context.user_data}
-    context.user_data['job'] = job_queue.run_once(auto_finalize_request, 60, chat_id=update.effective_chat.id, data=job_context)
     return PHOTO
 
-async def auto_finalize_request(context: ContextTypes.DEFAULT_TYPE):
-    """Автоматически завершает заявку, если таймер истек."""
-    job_context = context.job.data
-    chat_id = job_context['chat_id']
-    user_data = job_context['user_data']
-    photos = user_data.get("photos", [])
-
-    if len(photos) < MIN_PHOTOS:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"Время на отправку фото истекло. Необходимо отправить не менее {MIN_PHOTOS} фото. "
-                 "Ваша заявка отменена. Попробуйте еще раз.",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        # Возвращаем в главное меню
-        await start(update, context) # Используем update и context, но это может вызвать ошибку.
-        return
-    
-    user_username = user_data.get('username', 'Не указан')
-    user_id = user_data.get('user_id', chat_id)
-    
-    text = (
-        f"📩 Новая заявка (автоматическая отправка):\n"
-        f"👤 Имя: {user_data.get('name', 'Не указано')}\n"
-        f"📞 Телефон: {user_data.get('phone', 'Не указан')}\n"
-        f"💬 Комментарий: {user_data.get('comment', 'Не указан')}\n"
-        f"🔗 Пользователь: <a href='tg://user?id={user_id}'>{user_username}</a>"
-    )
-    
-    for admin_id in ADMIN_IDS:
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=text,
-            parse_mode='HTML'
-        )
-        if photos:
-            try:
-                media_group = [InputMediaPhoto(media=photo_id) for photo_id in photos]
-                await context.bot.send_media_group(chat_id=admin_id, media=media_group)
-            except Exception as e:
-                logger.error(f"Не удалось отправить медиагруппу: {e}")
-                for photo_id in photos:
-                    await context.bot.send_photo(chat_id=admin_id, photo=photo_id)
-
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text="Спасибо! Ваша заявка автоматически отправлена.",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    
-    user_data.clear()
-
 async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'job' in context.user_data:
-        context.user_data['job'].schedule_removal()
-        del context.user_data['job']
-
     photos = context.user_data.get("photos", [])
     
     if len(photos) < MIN_PHOTOS:
@@ -197,9 +124,6 @@ async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Вы отправили только {len(photos)}. "
             "Пожалуйста, отправьте еще фото."
         )
-        job_queue = context.application.job_queue
-        job_context = {'chat_id': update.effective_chat.id, 'user_data': context.user_data}
-        context.user_data['job'] = job_queue.run_once(auto_finalize_request, 60, chat_id=update.effective_chat.id, data=job_context)
         return PHOTO
 
     user_username = update.effective_user.username or 'Не указан'
@@ -234,7 +158,6 @@ async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     context.user_data.clear()
     
-    # Возвращаем в главное меню
     await start(update, context)
     return ConversationHandler.END
 
@@ -242,14 +165,13 @@ async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # Обработчики для главного меню
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Regex("^Написать специалисту$"), handle_specialist_redirect))
     
     conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.Regex("^Отправить заявку$"), start_new_request),
-            CommandHandler("start", start_new_request) # Позволяет начать новую заявку с /start
+            CommandHandler("start", start_new_request)
         ],
         states={
             NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
@@ -268,14 +190,12 @@ def main():
     )
     app.add_handler(conv_handler)
     
-    logger.info("Бот запущен (polling)")
     # Запуск бота в режиме Webhook для Render
     PORT = int(os.environ.get("PORT", "8080"))
     app.run_webhook(listen="0.0.0.0",
                     port=PORT,
                     url_path=TOKEN,
                     webhook_url=os.environ.get("WEBHOOK_URL", ""))
-
 
 if __name__ == "__main__":
     main()
