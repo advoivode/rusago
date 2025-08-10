@@ -32,7 +32,6 @@ MIN_PHOTOS = 4
 
 # === ОБРАБОТЧИКИ ===
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Убираем таймер, если он был
     if 'job' in context.user_data:
         context.user_data['job'].job.schedule_removal()
         del context.user_data['job']
@@ -56,13 +55,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def start_new_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # --- ИСПРАВЛЕНИЕ: Очищаем данные, если они уже есть ---
     if 'job' in context.user_data:
         context.user_data['job'].job.schedule_removal()
         del context.user_data['job']
+    
     context.user_data.clear()
-    # ---------------------------------------------------
     context.user_data["photos"] = []
+    
     await update.message.reply_text("Как вас зовут?", reply_markup=ReplyKeyboardRemove())
     return NAME
 
@@ -101,31 +100,40 @@ async def get_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return PHOTO
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Убираем старый таймер
     if 'job' in context.user_data:
         context.user_data['job'].job.schedule_removal()
 
-    if update.message.photo:
-        # Проверяем, есть ли media_group_id, чтобы избежать дублирования
-        if not update.message.media_group_id or update.message.media_group_id != context.user_data.get('last_media_group_id'):
-            photo_file_id = update.message.photo[-1].file_id
-            context.user_data["photos"].append(photo_file_id)
-            context.user_data['last_media_group_id'] = update.message.media_group_id
-
-    current_photos_count = len(context.user_data["photos"])
-    if current_photos_count < MIN_PHOTOS:
-        await update.message.reply_text(
-            f"Получено {current_photos_count}/{MIN_PHOTOS} фото. "
-            "Отправьте еще фото."
-        )
-    else:
-        keyboard = [[KeyboardButton("Готово")]]
-        markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text(
-            f"Получено {current_photos_count} фото. "
-            "Можете продолжать отправлять фото или нажмите 'Готово' для завершения.",
-            reply_markup=markup
-        )
+    # Если это медиагруппа, Telegram отправляет несколько сообщений.
+    # Мы должны обработать только первое из них, чтобы избежать дублирования.
+    if update.message.media_group_id and update.message.media_group_id == context.user_data.get('last_media_group_id'):
+        # Это не первое сообщение из медиагруппы, просто игнорируем
+        return PHOTO
     
+    if update.message.photo:
+        if update.message.media_group_id:
+            context.user_data['last_media_group_id'] = update.message.media_group_id
+            
+        # Добавляем фото в список
+        photo_file_id = update.message.photo[-1].file_id
+        context.user_data["photos"].append(photo_file_id)
+
+        current_photos_count = len(context.user_data["photos"])
+        if current_photos_count < MIN_PHOTOS:
+            await update.message.reply_text(
+                f"Получено {current_photos_count}/{MIN_PHOTOS} фото. "
+                "Отправьте еще фото."
+            )
+        else:
+            keyboard = [[KeyboardButton("Готово")]]
+            markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+            await update.message.reply_text(
+                f"Получено {current_photos_count} фото. "
+                "Можете продолжать отправлять фото или нажмите 'Готово' для завершения.",
+                reply_markup=markup
+            )
+    
+    # Перезапускаем таймер
     job_queue = context.application.job_queue
     job_context = {'chat_id': update.effective_chat.id, 'user_data': context.user_data}
     context.user_data['job'] = job_queue.run_once(auto_finalize_request, 60, chat_id=update.effective_chat.id, user_data=job_context)
@@ -141,7 +149,8 @@ async def auto_finalize_request(context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=chat_id,
             text=f"Время на отправку фото истекло. Необходимо отправить не менее {MIN_PHOTOS} фото. "
-                 "Ваша заявка отменена. Попробуйте еще раз."
+                 "Ваша заявка отменена. Попробуйте еще раз.",
+            reply_markup=ReplyKeyboardRemove()
         )
     else:
         user_username = user_data.get('name', 'Не указано')
@@ -243,7 +252,7 @@ def main():
             PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
             COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_comment)],
             PHOTO: [
-                MessageHandler(filters.PHOTO | filters.MEDIA_GROUP, handle_photo),
+                MessageHandler(filters.PHOTO, handle_photo),
                 MessageHandler(filters.Regex("(?i)^Готово$"), finalize_request)
             ],
         },
