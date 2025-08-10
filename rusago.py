@@ -174,4 +174,26 @@ def main():
         states={
             NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
             PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
-            COMMENT: [MessageHandler(filters.
+            COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_comment)],
+            PHOTO: [
+                MessageHandler(filters.PHOTO, handle_photo),
+                MessageHandler(filters.Regex("(?i)^Готово$"), finalize_request)
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", start), # При /cancel возвращаемся в главное меню
+            MessageHandler(filters.Regex("^Отправить заявку$"), start_new_request),
+        ],
+    )
+    app.add_handler(conv_handler)
+    
+    logger.info("Бот запущен (polling)")
+    # Запуск бота в режиме Webhook для Render
+    PORT = int(os.environ.get("PORT", "8080"))
+    app.run_webhook(listen="0.0.0.0",
+                    port=PORT,
+                    url_path=TOKEN,
+                    webhook_url=os.environ.get("WEBHOOK_URL", ""))
+
+if __name__ == "__main__":
+    main()
