@@ -56,12 +56,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def start_new_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # --- ИСПРАВЛЕНИЕ: Очистка данных перед началом новой заявки ---
+    # --- ИСПРАВЛЕНИЕ: Очищаем данные, если они уже есть ---
     if 'job' in context.user_data:
         context.user_data['job'].job.schedule_removal()
         del context.user_data['job']
     context.user_data.clear()
-    # -------------------------------------------------------------
+    # ---------------------------------------------------
     context.user_data["photos"] = []
     await update.message.reply_text("Как вас зовут?", reply_markup=ReplyKeyboardRemove())
     return NAME
@@ -105,8 +105,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['job'].job.schedule_removal()
 
     if update.message.photo:
-        photo_file_id = update.message.photo[-1].file_id
-        context.user_data["photos"].append(photo_file_id)
+        # Проверяем, есть ли media_group_id, чтобы избежать дублирования
+        if not update.message.media_group_id or update.message.media_group_id != context.user_data.get('last_media_group_id'):
+            photo_file_id = update.message.photo[-1].file_id
+            context.user_data["photos"].append(photo_file_id)
+            context.user_data['last_media_group_id'] = update.message.media_group_id
 
     current_photos_count = len(context.user_data["photos"])
     if current_photos_count < MIN_PHOTOS:
@@ -215,4 +218,43 @@ async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 media_group = [InputMediaPhoto(media=photo_id) for photo_id in photos]
                 await context.bot.send_media_group(chat_id=admin_id, media=media_group)
             except Exception as e:
-                logger
+                logger.error(f"Не удалось отправить медиагруппу: {e}")
+                for photo_id in photos:
+                    await context.bot.send_photo(chat_id=admin_id, photo=photo_id)
+
+    await update.message.reply_text(
+        "Спасибо! Ваша заявка успешно отправлена.",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    context.user_data.clear()
+    return ConversationHandler.END
+
+# === ОСНОВНАЯ ФУНКЦИЯ ===
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Regex("^Написать специалисту$"), handle_specialist_redirect))
+
+    conv_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^Отправить заявку$"), start_new_request)],
+        states={
+            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
+            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
+            COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_comment)],
+            PHOTO: [
+                MessageHandler(filters.PHOTO | filters.MEDIA_GROUP, handle_photo),
+                MessageHandler(filters.Regex("(?i)^Готово$"), finalize_request)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    app.add_handler(conv_handler)
+
+    logger.info("Бот запущен (polling)")
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
