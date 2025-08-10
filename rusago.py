@@ -1,6 +1,6 @@
 import os
 import logging
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InputMediaPhoto
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -87,29 +87,57 @@ async def get_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return PHOTO
 
-async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_media_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает медиагруппу (несколько фото в одном сообщении)."""
+    if update.message.media_group_id:
+        if "media_group_id" not in context.user_data or context.user_data["media_group_id"] != update.message.media_group_id:
+            context.user_data["media_group_id"] = update.message.media_group_id
+            
+            # Собираем все фото из медиагруппы
+            messages = await context.bot.get_updates(offset=update.update_id, limit=100) # Ограничение на 100 сообщений в медиагруппе
+            
+            photos_in_group = [m.message.photo[-1].file_id for m in messages if m.message.photo and m.message.media_group_id == update.message.media_group_id]
+
+            context.user_data["photos"].extend(photos_in_group)
+
+    current_photos_count = len(context.user_data["photos"])
+    if current_photos_count < MIN_PHOTOS:
+        await update.message.reply_text(
+            f"Получено {current_photos_count}/{MIN_PHOTOS} фото. "
+            "Отправьте еще фото."
+        )
+    else:
+        keyboard = [[KeyboardButton("Готово")]]
+        markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        await update.message.reply_text(
+            f"Получено {current_photos_count} фото. "
+            "Можете продолжать отправлять фото или нажмите 'Готово' для завершения.",
+            reply_markup=markup
+        )
+    return PHOTO
+
+async def handle_single_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает одиночное фото."""
     if update.message.photo:
         photo_file_id = update.message.photo[-1].file_id
         context.user_data["photos"].append(photo_file_id)
-        current_photos_count = len(context.user_data["photos"])
 
-        if current_photos_count < MIN_PHOTOS:
-            await update.message.reply_text(
-                f"Получено {current_photos_count}/{MIN_PHOTOS} фото. "
-                "Отправьте еще фото."
-            )
-        else:
-            keyboard = [
-                [KeyboardButton("Готово")]
-            ]
-            markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-            await update.message.reply_text(
-                f"Получено {current_photos_count} фото. "
-                "Можете продолжать отправлять фото или нажмите 'Готово' для завершения.",
-                reply_markup=markup
-            )
-
+    current_photos_count = len(context.user_data["photos"])
+    if current_photos_count < MIN_PHOTOS:
+        await update.message.reply_text(
+            f"Получено {current_photos_count}/{MIN_PHOTOS} фото. "
+            "Отправьте еще фото."
+        )
+    else:
+        keyboard = [[KeyboardButton("Готово")]]
+        markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        await update.message.reply_text(
+            f"Получено {current_photos_count} фото. "
+            "Можете продолжать отправлять фото или нажмите 'Готово' для завершения.",
+            reply_markup=markup
+        )
     return PHOTO
+
 
 async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photos = context.user_data.get("photos", [])
@@ -141,14 +169,12 @@ async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if photos:
             try:
-                # Отправка всех фотографий как медиагруппы
                 media_group = [
-                    {'media': photo_id, 'type': 'photo'} for photo_id in photos
+                    InputMediaPhoto(media=photo_id) for photo_id in photos
                 ]
                 await context.bot.send_media_group(chat_id=admin_id, media=media_group)
             except Exception as e:
                 logger.error(f"Не удалось отправить медиагруппу: {e}")
-                # Если отправка медиагруппы не удалась, отправляем по одной
                 for photo_id in photos:
                     await context.bot.send_photo(chat_id=admin_id, photo=photo_id)
 
@@ -173,8 +199,9 @@ def main():
             PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
             COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_comment)],
             PHOTO: [
-                MessageHandler(filters.PHOTO, get_photo),
-                MessageHandler(filters.Regex("(?i)^Готово$"), finalize_request)
+                MessageHandler(filters.PHOTO, handle_single_photo),
+                MessageHandler(filters.MEDIA_GROUP, handle_media_group),
+                MessageHandler(filters.Regex("(?i)^Готово$"), finalize_request),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
