@@ -32,6 +32,10 @@ MIN_PHOTOS = 4
 
 # === ОБРАБОТЧИКИ ===
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Убираем таймер, если он был
+    if 'job' in context.user_data:
+        context.user_data['job'].job.schedule_removal()
+        del context.user_data['job']
     context.user_data.clear()
     await update.message.reply_text(
         "Заявка отменена. Можете начать заново с команды /start",
@@ -83,41 +87,19 @@ async def get_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["comment"] = update.message.text
     await update.message.reply_text(
         f"Отправьте не менее {MIN_PHOTOS} фото. Вы можете отправить их одной группой или по одному. "
-        "После того, как отправите все фото, нажмите 'Готово'."
+        "После того, как отправите все фото, нажмите 'Готово' или подождите 60 секунд."
     )
+    # Устанавливаем таймер
+    job_queue = context.application.job_queue
+    job_context = {'chat_id': update.effective_chat.id, 'user_data': context.user_data}
+    context.user_data['job'] = job_queue.run_once(auto_finalize_request, 60, chat_id=update.effective_chat.id, user_data=job_context)
     return PHOTO
 
-async def handle_media_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает медиагруппу (несколько фото в одном сообщении)."""
-    if update.message.media_group_id:
-        if "media_group_id" not in context.user_data or context.user_data["media_group_id"] != update.message.media_group_id:
-            context.user_data["media_group_id"] = update.message.media_group_id
-            
-            # Собираем все фото из медиагруппы
-            messages = await context.bot.get_updates(offset=update.update_id, limit=100) # Ограничение на 100 сообщений в медиагруппе
-            
-            photos_in_group = [m.message.photo[-1].file_id for m in messages if m.message.photo and m.message.media_group_id == update.message.media_group_id]
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Сбрасываем таймер при получении нового фото
+    if 'job' in context.user_data:
+        context.user_data['job'].job.schedule_removal()
 
-            context.user_data["photos"].extend(photos_in_group)
-
-    current_photos_count = len(context.user_data["photos"])
-    if current_photos_count < MIN_PHOTOS:
-        await update.message.reply_text(
-            f"Получено {current_photos_count}/{MIN_PHOTOS} фото. "
-            "Отправьте еще фото."
-        )
-    else:
-        keyboard = [[KeyboardButton("Готово")]]
-        markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text(
-            f"Получено {current_photos_count} фото. "
-            "Можете продолжать отправлять фото или нажмите 'Готово' для завершения.",
-            reply_markup=markup
-        )
-    return PHOTO
-
-async def handle_single_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает одиночное фото."""
     if update.message.photo:
         photo_file_id = update.message.photo[-1].file_id
         context.user_data["photos"].append(photo_file_id)
@@ -136,10 +118,69 @@ async def handle_single_photo(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Можете продолжать отправлять фото или нажмите 'Готово' для завершения.",
             reply_markup=markup
         )
+    
+    # Перезапускаем таймер
+    job_queue = context.application.job_queue
+    job_context = {'chat_id': update.effective_chat.id, 'user_data': context.user_data}
+    context.user_data['job'] = job_queue.run_once(auto_finalize_request, 60, chat_id=update.effective_chat.id, user_data=job_context)
     return PHOTO
+
+async def auto_finalize_request(context: ContextTypes.DEFAULT_TYPE):
+    """Автоматически завершает заявку, если таймер истек."""
+    job_context = context.job.user_data
+    chat_id = job_context['chat_id']
+    user_data = job_context['user_data']
+    photos = user_data.get("photos", [])
+
+    if len(photos) < MIN_PHOTOS:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"Время на отправку фото истекло. Необходимо отправить не менее {MIN_PHOTOS} фото. "
+                 "Ваша заявка отменена. Попробуйте еще раз."
+        )
+    else:
+        user_username = user_data.get('name', 'Не указано')  # Используем имя из user_data для сообщения
+        user_id = user_data.get('phone', 'Не указан')  # Используем телефон как идентификатор
+        
+        text = (
+            f"📩 Новая заявка (автоматическая отправка):\n"
+            f"👤 Имя: {user_data.get('name', 'Не указано')}\n"
+            f"📞 Телефон: {user_data.get('phone', 'Не указан')}\n"
+            f"💬 Комментарий: {user_data.get('comment', 'Не указан')}\n"
+            f"🔗 Пользователь: <a href='tg://user?id={chat_id}'>{user_username or 'Не указан'}</a>"
+        )
+        
+        for admin_id in ADMIN_IDS:
+            await context.bot.send_message(
+                chat_id=admin_id,
+                text=text,
+                parse_mode='HTML'
+            )
+            if photos:
+                try:
+                    media_group = [InputMediaPhoto(media=photo_id) for photo_id in photos]
+                    await context.bot.send_media_group(chat_id=admin_id, media=media_group)
+                except Exception as e:
+                    logger.error(f"Не удалось отправить медиагруппу: {e}")
+                    for photo_id in photos:
+                        await context.bot.send_photo(chat_id=admin_id, photo=photo_id)
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Спасибо! Ваша заявка автоматически отправлена.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+    
+    # Очищаем данные пользователя после отправки
+    user_data.clear()
 
 
 async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Убираем таймер
+    if 'job' in context.user_data:
+        context.user_data['job'].job.schedule_removal()
+        del context.user_data['job']
+
     photos = context.user_data.get("photos", [])
     
     if len(photos) < MIN_PHOTOS:
@@ -148,6 +189,10 @@ async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Вы отправили только {len(photos)}. "
             "Пожалуйста, отправьте еще фото."
         )
+        # Перезапускаем таймер, чтобы дать пользователю еще время
+        job_queue = context.application.job_queue
+        job_context = {'chat_id': update.effective_chat.id, 'user_data': context.user_data}
+        context.user_data['job'] = job_queue.run_once(auto_finalize_request, 60, chat_id=update.effective_chat.id, user_data=job_context)
         return PHOTO
 
     user_username = update.message.from_user.username
@@ -169,9 +214,7 @@ async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if photos:
             try:
-                media_group = [
-                    InputMediaPhoto(media=photo_id) for photo_id in photos
-                ]
+                media_group = [InputMediaPhoto(media=photo_id) for photo_id in photos]
                 await context.bot.send_media_group(chat_id=admin_id, media=media_group)
             except Exception as e:
                 logger.error(f"Не удалось отправить медиагруппу: {e}")
@@ -199,9 +242,8 @@ def main():
             PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
             COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_comment)],
             PHOTO: [
-                MessageHandler(filters.PHOTO, handle_single_photo),
-                MessageHandler(filters.MEDIA_GROUP, handle_media_group),
-                MessageHandler(filters.Regex("(?i)^Готово$"), finalize_request),
+                MessageHandler(filters.PHOTO | filters.MEDIA_GROUP, handle_photo),
+                MessageHandler(filters.Regex("(?i)^Готово$"), finalize_request)
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
