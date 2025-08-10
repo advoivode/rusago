@@ -31,34 +31,32 @@ NAME, PHONE, COMMENT, PHOTO = range(4)
 MIN_PHOTOS = 4
 
 # === ОБРАБОТЧИКИ ===
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    await update.message.reply_text(
-        "Заявка отменена. Можете начать заново с команды /start",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    return ConversationHandler.END
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет главное меню с кнопками."""
     keyboard = [
         [KeyboardButton("Отправить заявку")],
         [KeyboardButton("Написать специалисту")]
     ]
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
-        "Привет! Я готов принимать твои заявки. "
-        "Выберите вариант ниже 👇",
+        "Привет! Я готов принимать твои заявки. Выбери вариант ниже 👇",
         reply_markup=markup
     )
+    # Завершаем любой активный диалог, чтобы начать новый
     return ConversationHandler.END
 
 async def start_new_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает новый диалог для отправки заявки."""
     context.user_data.clear()
     context.user_data["photos"] = []
-    await update.message.reply_text("Как вас зовут?", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text(
+        "Как вас зовут?", 
+        reply_markup=ReplyKeyboardRemove()
+    )
     return NAME
 
 async def handle_specialist_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает кнопку 'Написать специалисту'."""
     chat_info = await context.bot.get_chat(SPECIALIST_ADMIN_ID)
     if chat_info.username:
         await update.message.reply_text(
@@ -66,23 +64,26 @@ async def handle_specialist_redirect(update: Update, context: ContextTypes.DEFAU
         )
     else:
         await update.message.reply_text(
-            "У специалиста нет публичного username. "
-            "Отправьте заявку, чтобы он связался с вами."
+            "У специалиста нет публичного username. Отправьте заявку, чтобы он связался с вами."
         )
     return ConversationHandler.END
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохраняет имя и запрашивает телефон."""
     context.user_data["name"] = update.message.text
     await update.message.reply_text("Укажите номер телефона:")
     return PHONE
 
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохраняет телефон и запрашивает комментарий."""
     context.user_data["phone"] = update.message.text
     await update.message.reply_text("Введите ваш комментарий (или напишите 'Пропустить'):")
     return COMMENT
 
 async def get_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["comment"] = update.message.text if update.message.text.lower() != 'пропустить' else 'Нет комментария'
+    """Сохраняет комментарий и запрашивает фото."""
+    comment = update.message.text
+    context.user_data["comment"] = comment if comment.lower() != 'пропустить' else 'Нет комментария'
     await update.message.reply_text(
         f"Отправьте не менее {MIN_PHOTOS} фото. Вы можете отправить их одной группой или по одному. "
         "После того, как отправите все фото, нажмите 'Готово'."
@@ -90,39 +91,35 @@ async def get_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return PHOTO
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохраняет фото и отображает кнопку 'Готово' при достижении MIN_PHOTOS."""
     if update.message.photo:
         photo_file_id = update.message.photo[-1].file_id
-        if "photos" not in context.user_data:
-            context.user_data["photos"] = []
-        if photo_file_id not in context.user_data["photos"]:
-            context.user_data["photos"].append(photo_file_id)
+        context.user_data.setdefault("photos", []).append(photo_file_id)
 
-    current_photos_count = len(context.user_data["photos"])
+    current_photos_count = len(context.user_data.get("photos", []))
     
     if current_photos_count >= MIN_PHOTOS:
         keyboard = [[KeyboardButton("Готово")]]
         markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(
-            f"Получено {current_photos_count} фото. "
-            "Можете продолжать отправлять фото или нажмите 'Готово' для завершения.",
+            f"Получено {current_photos_count} фото. Нажмите 'Готово' для завершения.",
             reply_markup=markup
         )
     else:
         await update.message.reply_text(
-            f"Получено {current_photos_count}/{MIN_PHOTOS} фото. "
-            "Отправьте еще фото."
+            f"Получено {current_photos_count}/{MIN_PHOTOS} фото. Отправьте ещё фото."
         )
     
     return PHOTO
 
 async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет заявку администраторам и завершает диалог."""
     photos = context.user_data.get("photos", [])
     
     if len(photos) < MIN_PHOTOS:
         await update.message.reply_text(
             f"Необходимо отправить не менее {MIN_PHOTOS} фото. "
-            f"Вы отправили только {len(photos)}. "
-            "Пожалуйста, отправьте еще фото."
+            f"Вы отправили только {len(photos)}. Пожалуйста, отправьте ещё фото."
         )
         return PHOTO
 
@@ -165,42 +162,16 @@ async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Сначала добавляем обработчики для кнопок главного меню и команд,
-    # которые должны работать всегда.
+    # Сначала добавляем обработчики, которые не должны прерываться ConversationHandler
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Regex("^Написать специалисту$"), handle_specialist_redirect))
     
-    # Затем добавляем ConversationHandler, чтобы он обрабатывал диалог
-    # только после того, как будет вызвана start_new_request.
+    # Затем добавляем сам ConversationHandler
     conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.Regex("^Отправить заявку$"), start_new_request),
-            CommandHandler("start", start_new_request)
         ],
         states={
             NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
             PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
-            COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_comment)],
-            PHOTO: [
-                MessageHandler(filters.PHOTO, handle_photo),
-                MessageHandler(filters.Regex("(?i)^Готово$"), finalize_request)
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            # Этот обработчик в fallbacks позволяет перезапустить заявку в любой момент
-            MessageHandler(filters.Regex("^Отправить заявку$"), start_new_request),
-        ],
-    )
-    app.add_handler(conv_handler)
-    
-    logger.info("Бот запущен (polling)")
-    # Запуск бота в режиме Webhook для Render
-    PORT = int(os.environ.get("PORT", "8080"))
-    app.run_webhook(listen="0.0.0.0",
-                    port=PORT,
-                    url_path=TOKEN,
-                    webhook_url=os.environ.get("WEBHOOK_URL", ""))
-
-if __name__ == "__main__":
-    main()
+            COMMENT: [MessageHandler(filters.
