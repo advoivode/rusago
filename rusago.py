@@ -55,7 +55,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def start_new_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Если бот уже находится в диалоге, мы его сбрасываем
     if 'job' in context.user_data:
         context.user_data['job'].job.schedule_removal()
         del context.user_data['job']
@@ -236,6 +235,12 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Regex("^Написать специалисту$"), handle_specialist_redirect))
+    
+    # Новый обработчик для принудительного перезапуска диалога
+    reset_handler = MessageHandler(
+        filters.Regex("^Отправить заявку$"), 
+        start_new_request
+    )
 
     conv_handler = ConversationHandler(
         entry_points=[
@@ -250,10 +255,15 @@ def main():
                 MessageHandler(filters.Regex("(?i)^Готово$"), finalize_request)
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        # Обработчик, который ловит повторное нажатие кнопки
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            reset_handler
+        ],
     )
 
     app.add_handler(conv_handler)
+    app.add_handler(reset_handler) # Добавляем его и как обычный обработчик, чтобы он сработал вне ConversationHandler
 
     logger.info("Бот запущен (polling)")
     app.run_polling()
