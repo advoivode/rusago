@@ -24,7 +24,7 @@ if not TOKEN:
     exit(1)
 
 ADMIN_IDS = [5979123966, 939518066]
-SPECIALIST_ADMIN_ID = 939518066
+SPECIALIST_ADMIN_ID = 5979123966
 
 # Этапы диалога
 NAME, PHONE, COMMENT, PHOTO = range(4)
@@ -56,8 +56,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def start_new_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # --- ИСПРАВЛЕНИЕ: Очистка данных перед началом новой заявки ---
+    if 'job' in context.user_data:
+        context.user_data['job'].job.schedule_removal()
+        del context.user_data['job']
+    context.user_data.clear()
+    # -------------------------------------------------------------
     context.user_data["photos"] = []
-    await update.message.reply_text("Как вас зовут?")
+    await update.message.reply_text("Как вас зовут?", reply_markup=ReplyKeyboardRemove())
     return NAME
 
 async def handle_specialist_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -89,14 +95,12 @@ async def get_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Отправьте не менее {MIN_PHOTOS} фото. Вы можете отправить их одной группой или по одному. "
         "После того, как отправите все фото, нажмите 'Готово' или подождите 60 секунд."
     )
-    # Устанавливаем таймер
     job_queue = context.application.job_queue
     job_context = {'chat_id': update.effective_chat.id, 'user_data': context.user_data}
     context.user_data['job'] = job_queue.run_once(auto_finalize_request, 60, chat_id=update.effective_chat.id, user_data=job_context)
     return PHOTO
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Сбрасываем таймер при получении нового фото
     if 'job' in context.user_data:
         context.user_data['job'].job.schedule_removal()
 
@@ -119,14 +123,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=markup
         )
     
-    # Перезапускаем таймер
     job_queue = context.application.job_queue
     job_context = {'chat_id': update.effective_chat.id, 'user_data': context.user_data}
     context.user_data['job'] = job_queue.run_once(auto_finalize_request, 60, chat_id=update.effective_chat.id, user_data=job_context)
     return PHOTO
 
 async def auto_finalize_request(context: ContextTypes.DEFAULT_TYPE):
-    """Автоматически завершает заявку, если таймер истек."""
     job_context = context.job.user_data
     chat_id = job_context['chat_id']
     user_data = job_context['user_data']
@@ -139,8 +141,8 @@ async def auto_finalize_request(context: ContextTypes.DEFAULT_TYPE):
                  "Ваша заявка отменена. Попробуйте еще раз."
         )
     else:
-        user_username = user_data.get('name', 'Не указано')  # Используем имя из user_data для сообщения
-        user_id = user_data.get('phone', 'Не указан')  # Используем телефон как идентификатор
+        user_username = user_data.get('name', 'Не указано')
+        user_id = user_data.get('phone', 'Не указан')
         
         text = (
             f"📩 Новая заявка (автоматическая отправка):\n"
@@ -171,12 +173,9 @@ async def auto_finalize_request(context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardRemove()
         )
     
-    # Очищаем данные пользователя после отправки
     user_data.clear()
 
-
 async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Убираем таймер
     if 'job' in context.user_data:
         context.user_data['job'].job.schedule_removal()
         del context.user_data['job']
@@ -189,7 +188,6 @@ async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Вы отправили только {len(photos)}. "
             "Пожалуйста, отправьте еще фото."
         )
-        # Перезапускаем таймер, чтобы дать пользователю еще время
         job_queue = context.application.job_queue
         job_context = {'chat_id': update.effective_chat.id, 'user_data': context.user_data}
         context.user_data['job'] = job_queue.run_once(auto_finalize_request, 60, chat_id=update.effective_chat.id, user_data=job_context)
@@ -217,44 +215,4 @@ async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 media_group = [InputMediaPhoto(media=photo_id) for photo_id in photos]
                 await context.bot.send_media_group(chat_id=admin_id, media=media_group)
             except Exception as e:
-                logger.error(f"Не удалось отправить медиагруппу: {e}")
-                for photo_id in photos:
-                    await context.bot.send_photo(chat_id=admin_id, photo=photo_id)
-
-    await update.message.reply_text(
-        "Спасибо! Ваша заявка успешно отправлена.",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    context.user_data.clear()
-    return ConversationHandler.END
-
-# === ОСНОВНАЯ ФУНКЦИЯ ===
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.Regex("^Написать специалисту$"), handle_specialist_redirect))
-
-    conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^Отправить заявку$"), start_new_request)],
-        states={
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
-            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
-            COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_comment)],
-            PHOTO: [
-                MessageHandler(filters.PHOTO | filters.MEDIA_GROUP, handle_photo),
-                MessageHandler(filters.Regex("(?i)^Готово$"), finalize_request)
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-
-    app.add_handler(conv_handler)
-
-    logger.info("Бот запущен (polling)")
-    app.run_polling()
-
-
-if __name__ == "__main__":
-    main()
-
+                logger
