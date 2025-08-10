@@ -1,6 +1,6 @@
 import os
 import logging
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -28,10 +28,14 @@ SPECIALIST_ADMIN_ID = 5979123966
 
 # Этапы диалога
 NAME, PHONE, COMMENT, PHOTO = range(4)
+MIN_PHOTOS = 4
 
 # === ОБРАБОТЧИКИ ===
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Заявка отменена. Можете начать заново с команды /start")
+    await update.message.reply_text(
+        "Заявка отменена. Можете начать заново с команды /start",
+        reply_markup=ReplyKeyboardRemove()
+    )
     return ConversationHandler.END
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -47,6 +51,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def start_new_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["photos"] = []
     await update.message.reply_text("Как вас зовут?")
     return NAME
 
@@ -75,20 +80,46 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["comment"] = update.message.text
-    await update.message.reply_text("Отправьте фото документов (или напишите 'Пропустить'):")
+    await update.message.reply_text(
+        f"Отправьте не менее {MIN_PHOTOS} фото. "
+        "После того, как отправите все фото, нажмите 'Готово'."
+    )
     return PHOTO
 
 async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    photo_file_id = None
     if update.message.photo:
         photo_file_id = update.message.photo[-1].file_id
-    elif update.message.text and update.message.text.lower() == 'пропустить':
-        pass
+        context.user_data["photos"].append(photo_file_id)
+        current_photos_count = len(context.user_data["photos"])
+        if current_photos_count < MIN_PHOTOS:
+            await update.message.reply_text(
+                f"Получено {current_photos_count}/{MIN_PHOTOS} фото. "
+                "Отправьте еще фото или нажмите 'Готово' после того, как отправите все."
+            )
+        else:
+            keyboard = [
+                [KeyboardButton("Готово")]
+            ]
+            markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+            await update.message.reply_text(
+                f"Получено {current_photos_count} фото. "
+                "Можете продолжать отправлять фото или нажмите 'Готово' для завершения.",
+                reply_markup=markup
+            )
     else:
-        await update.message.reply_text("Пожалуйста, отправьте фото или напишите 'Пропустить'.")
+        await update.message.reply_text("Пожалуйста, отправьте фото.")
+    return PHOTO
+
+async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    photos = context.user_data.get("photos", [])
+    if len(photos) < MIN_PHOTOS:
+        await update.message.reply_text(
+            f"Необходимо отправить не менее {MIN_PHOTOS} фото. "
+            f"Вы отправили только {len(photos)}. "
+            "Пожалуйста, отправьте еще фото."
+        )
         return PHOTO
 
-    context.user_data["photo"] = photo_file_id
     user_username = update.message.from_user.username
 
     text = (
@@ -100,10 +131,18 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     for admin_id in ADMIN_IDS:
-        await context.bot.send_message(chat_id=admin_id, text=text)
-        if photo_file_id:
-            await context.bot.send_photo(chat_id=admin_id, photo=photo_file_id)
+        await context.bot.send_message(
+            chat_id=admin_id,
+            text=text
+        )
+        if photos:
+            for photo_id in photos:
+                await context.bot.send_photo(chat_id=admin_id, photo=photo_id)
 
+    await update.message.reply_text(
+        "Спасибо! Ваша заявка успешно отправлена.",
+        reply_markup=ReplyKeyboardRemove()
+    )
     await start(update, context)
     return ConversationHandler.END
 
@@ -122,7 +161,7 @@ def main():
             COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_comment)],
             PHOTO: [
                 MessageHandler(filters.PHOTO, get_photo),
-                MessageHandler(filters.Regex("(?i)пропустить"), get_photo)
+                MessageHandler(filters.Regex("(?i)^Готово$"), finalize_request)
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
