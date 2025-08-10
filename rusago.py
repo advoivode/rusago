@@ -242,7 +242,7 @@ def main():
             PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
             COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_comment)],
             PHOTO: [
-                MessageHandler(filters.PHOTO | filters.MEDIA_GROUP, handle_photo),
+                MessageHandler(filters.PHOTO, handle_photo),
                 MessageHandler(filters.Regex("(?i)^Готово$"), finalize_request)
             ],
         },
@@ -257,3 +257,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
