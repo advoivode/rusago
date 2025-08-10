@@ -32,6 +32,7 @@ MIN_PHOTOS = 4
 
 # === ОБРАБОТЧИКИ ===
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
     await update.message.reply_text(
         "Заявка отменена. Можете начать заново с команды /start",
         reply_markup=ReplyKeyboardRemove()
@@ -81,7 +82,7 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["comment"] = update.message.text
     await update.message.reply_text(
-        f"Отправьте не менее {MIN_PHOTOS} фото. "
+        f"Отправьте не менее {MIN_PHOTOS} фото. Вы можете отправить их одной группой или по одному. "
         "После того, как отправите все фото, нажмите 'Готово'."
     )
     return PHOTO
@@ -91,10 +92,11 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo_file_id = update.message.photo[-1].file_id
         context.user_data["photos"].append(photo_file_id)
         current_photos_count = len(context.user_data["photos"])
+
         if current_photos_count < MIN_PHOTOS:
             await update.message.reply_text(
                 f"Получено {current_photos_count}/{MIN_PHOTOS} фото. "
-                "Отправьте еще фото или нажмите 'Готово' после того, как отправите все."
+                "Отправьте еще фото."
             )
         else:
             keyboard = [
@@ -106,12 +108,12 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Можете продолжать отправлять фото или нажмите 'Готово' для завершения.",
                 reply_markup=markup
             )
-    else:
-        await update.message.reply_text("Пожалуйста, отправьте фото.")
+
     return PHOTO
 
 async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photos = context.user_data.get("photos", [])
+    
     if len(photos) < MIN_PHOTOS:
         await update.message.reply_text(
             f"Необходимо отправить не менее {MIN_PHOTOS} фото. "
@@ -121,29 +123,40 @@ async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return PHOTO
 
     user_username = update.message.from_user.username
-
+    user_id = update.message.from_user.id
+    
     text = (
         f"📩 Новая заявка:\n"
         f"👤 Имя: {context.user_data.get('name', 'Не указано')}\n"
         f"📞 Телефон: {context.user_data.get('phone', 'Не указан')}\n"
         f"💬 Комментарий: {context.user_data.get('comment', 'Не указан')}\n"
-        f"🔗 Ник: {f'@{user_username}' if user_username else 'Не указан'}"
+        f"🔗 Пользователь: <a href='tg://user?id={user_id}'>{user_username or 'Не указан'}</a>"
     )
 
     for admin_id in ADMIN_IDS:
         await context.bot.send_message(
             chat_id=admin_id,
-            text=text
+            text=text,
+            parse_mode='HTML'
         )
         if photos:
-            for photo_id in photos:
-                await context.bot.send_photo(chat_id=admin_id, photo=photo_id)
+            try:
+                # Отправка всех фотографий как медиагруппы
+                media_group = [
+                    {'media': photo_id, 'type': 'photo'} for photo_id in photos
+                ]
+                await context.bot.send_media_group(chat_id=admin_id, media=media_group)
+            except Exception as e:
+                logger.error(f"Не удалось отправить медиагруппу: {e}")
+                # Если отправка медиагруппы не удалась, отправляем по одной
+                for photo_id in photos:
+                    await context.bot.send_photo(chat_id=admin_id, photo=photo_id)
 
     await update.message.reply_text(
         "Спасибо! Ваша заявка успешно отправлена.",
         reply_markup=ReplyKeyboardRemove()
     )
-    await start(update, context)
+    context.user_data.clear()
     return ConversationHandler.END
 
 # === ОСНОВНАЯ ФУНКЦИЯ ===
