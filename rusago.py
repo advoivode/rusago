@@ -53,6 +53,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def start_new_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Очищаем данные пользователя перед началом новой заявки
     context.user_data.clear()
     context.user_data["photos"] = []
     await update.message.reply_text("Как вас зовут?", reply_markup=ReplyKeyboardRemove())
@@ -150,52 +151,4 @@ async def finalize_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.error(f"Не удалось отправить медиагруппу: {e}")
                 for photo_id in photos:
-                    await context.bot.send_photo(chat_id=admin_id, photo=photo_id)
-
-    await update.message.reply_text(
-        "Спасибо! Ваша заявка успешно отправлена.",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    context.user_data.clear()
-    
-    await start(update, context)
-    return ConversationHandler.END
-
-# === ОСНОВНАЯ ФУНКЦИЯ ===
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-    
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.Regex("^Написать специалисту$"), handle_specialist_redirect))
-    
-    conv_handler = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.Regex("^Отправить заявку$"), start_new_request),
-            CommandHandler("start", start_new_request)
-        ],
-        states={
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
-            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
-            COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_comment)],
-            PHOTO: [
-                MessageHandler(filters.PHOTO, handle_photo),
-                MessageHandler(filters.Regex("(?i)^Готово$"), finalize_request)
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            MessageHandler(filters.Regex("^Отправить заявку$"), start_new_request),
-            CommandHandler("start", start),
-        ],
-    )
-    app.add_handler(conv_handler)
-    
-    # Запуск бота в режиме Webhook для Render
-    PORT = int(os.environ.get("PORT", "8080"))
-    app.run_webhook(listen="0.0.0.0",
-                    port=PORT,
-                    url_path=TOKEN,
-                    webhook_url=os.environ.get("WEBHOOK_URL", ""))
-
-if __name__ == "__main__":
-    main()
+                    await context.bot.send_photo(chat_id=admin_id, photo=photo
