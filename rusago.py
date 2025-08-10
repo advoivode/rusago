@@ -55,10 +55,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def start_new_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'job' in context.user_data:
-        context.user_data['job'].job.schedule_removal()
-        del context.user_data['job']
-    
+    # Очищаем данные, если они уже есть, чтобы начать новый диалог
     context.user_data.clear()
     context.user_data["photos"] = []
     
@@ -251,3 +248,15 @@ def main():
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
+            MessageHandler(filters.Regex("^Отправить заявку$"), start_new_request),
+        ],
+    )
+
+    app.add_handler(conv_handler)
+
+    logger.info("Бот запущен (polling)")
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
