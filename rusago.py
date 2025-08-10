@@ -54,10 +54,7 @@ async def handle_specialist_redirect(update: Update, context: ContextTypes.DEFAU
     chat_info = await context.bot.get_chat(SPECIALIST_ADMIN_ID)
     if chat_info.username:
         await update.message.reply_text(
-            "Вы будете перенаправлены в чат со специалистом:"
-        )
-        await update.message.reply_text(
-            f"t.me/{chat_info.username}"
+            f"Чат со специалистом: t.me/{chat_info.username}"
         )
     else:
         await update.message.reply_text(
@@ -111,7 +108,7 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # === ОСНОВНАЯ ФУНКЦИЯ ===
-def main():
+async def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -134,7 +131,8 @@ def main():
     app.add_handler(conv_handler)
 
     logger.info("Бот запущен (polling)")
-    app.run_polling()
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
